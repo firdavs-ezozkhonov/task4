@@ -37,6 +37,9 @@ def process_folder(folder):
             orders["timestamp"] = pd.to_datetime(orders["timestamp"], errors="coerce", utc=True)
             orders = orders.dropna(subset=["timestamp"])
 
+            orders = orders[orders["timestamp"].dt.year <= 2025]
+            orders = orders[(orders["unit_price"] > 0) & (orders["unit_price"] < 10000)]
+
             orders["paid_price"] = orders["quantity"] * orders["unit_price"] * EUR_TO_USD
             orders["date"] = orders["timestamp"].dt.date
 
@@ -54,6 +57,9 @@ def process_folder(folder):
                 normalized.append(fixed)
             books = pd.DataFrame(normalized)
             books = books.dropna(subset=["id","authors"])
+            books["authors"] = books["authors"].apply(
+                lambda x: [a.strip() for a in str(x).split(",") if a.strip()]
+            )
     return users, orders, books
 
 def analyze_folder(folder):
@@ -66,17 +72,13 @@ def analyze_folder(folder):
 
     unique_users = users["id"].nunique()
 
-    author_sets = books["authors"].dropna().apply(
-        lambda x: frozenset([a.strip() for a in str(x).split(",")])
-    )
-    unique_author_sets = author_sets.nunique()
-
-    author_counts = {}
+    all_authors = []
     for auth_list in books["authors"].dropna():
-        author_set = frozenset([a.strip() for a in str(auth_list).split(",")])
-        author_counts[author_set] = author_counts.get(author_set, 0) + 1
-    max_count = max(author_counts.values()) if author_counts else 0
-    popular_authors = [list(a) for a,c in author_counts.items() if c == max_count] if max_count > 0 else []
+        all_authors.extend(auth_list)
+    author_counts = pd.Series(all_authors).value_counts()
+    unique_author_sets = len(author_counts)
+    max_count = author_counts.max() if not author_counts.empty else 0
+    popular_authors = author_counts[author_counts == max_count].index.tolist()
 
     buyer_spending = orders.groupby("user_id")["paid_price"].sum()
     best_buyer = pd.DataFrame()
@@ -98,7 +100,8 @@ def analyze_folder(folder):
         "daily_revenue": daily_revenue
     }
 
-st.title("Task 4 Dashboard")
+st.title("📊 Task 4 Dashboard")
+st.markdown("This dashboard analyzes user, order, and book data across three datasets (DATA1, DATA2, DATA3).")
 
 for folder in ["DATA1","DATA2","DATA3"]:
     st.header(folder)
@@ -113,13 +116,14 @@ for folder in ["DATA1","DATA2","DATA3"]:
             results["top_days"]
             .reset_index()
             .rename(columns={"date": "Date", "paid_price": "Revenue (USD)"})
+            .style.format({"Revenue (USD)": "{:.2f}"})
         )
     else:
         st.write("No revenue data available")
 
     st.write("**Unique users:**", results["unique_users"])
-    st.write("**Unique sets of authors:**", results["unique_author_sets"])
-    st.write("**Most popular author(s):**", [", ".join(a) for a in results["popular_authors"]] if results["popular_authors"] else "None")
+    st.write("**Unique authors (counted individually):**", results["unique_author_sets"])
+    st.write("**Most popular author(s):**", results["popular_authors"] if results["popular_authors"] else "None")
     st.write("**Best buyer aliases:**", results["alias_ids"] if results["alias_ids"] else "None")
 
     fig, ax = plt.subplots()
